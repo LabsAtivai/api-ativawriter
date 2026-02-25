@@ -18,9 +18,20 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { subject, messages } = req.body || {};
+    const { subject, messages, userPrompt, personalization } = req.body || {};
 
-    const content = `${subject || ""}\n\n${messages || ""}`.trim();
+    const personalizationBlock = (personalization || "").trim()
+      ? `### Personalização de Cliente (docs enviados pelo usuário)\n${personalization.trim()}\n\n`
+      : "";
+
+    const promptBlock = (userPrompt || "").trim()
+      ? `### Instrução do usuário\n${userPrompt.trim()}\n\n`
+      : "";
+
+    const emailBlock = `### E-mail\nAssunto: ${subject || ""}\n\n${messages || ""}`.trim();
+
+    const content = `${personalizationBlock}${promptBlock}${emailBlock}`.trim();
+
     if (!content) {
       return res.status(400).json({ error: "Conteúdo vazio" });
     }
@@ -80,7 +91,7 @@ export default async function handler(req, res) {
     const run = await runRes.json();
 
     // 4) polling
-    let status = null;
+    let statusObj = null;
     let attempts = 0;
 
     while (attempts < 10) {
@@ -91,13 +102,13 @@ export default async function handler(req, res) {
         { headers }
       );
 
-      status = await statusRes.json();
-      if (status.status === "completed") break;
+      statusObj = await statusRes.json();
+      if (statusObj.status === "completed") break;
 
       attempts++;
     }
 
-    if (!status || status.status !== "completed") {
+    if (!statusObj || statusObj.status !== "completed") {
       return res.status(500).json({ error: "Timeout ao aguardar resposta" });
     }
 
