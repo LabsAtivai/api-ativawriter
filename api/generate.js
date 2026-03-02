@@ -9,32 +9,29 @@ function setCors(res) {
 export default async function handler(req, res) {
   setCors(res);
 
-  if (req.method === "OPTIONS") {
-    return res.status(200).end();
-  }
-
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method not allowed" });
-  }
+  if (req.method === "OPTIONS") return res.status(200).end();
+  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   try {
-    const { subject, messages, userPrompt, personalization } = req.body || {};
+    const { subject, messages, userPrompt, signature, reference } = req.body || {};
 
-    const personalizationBlock = (personalization || "").trim()
-      ? `### Personalização de Cliente (docs enviados pelo usuário)\n${personalization.trim()}\n\n`
+    const sigBlock = (signature || "").trim()
+      ? `### ASSINATURA (obrigatório usar ao final; substituir placeholders)\n${signature.trim()}\n\n`
+      : "";
+
+    const refBlock = (reference || "").trim()
+      ? `### MATERIAL DE APOIO (usar como argumentos/cases; não citar "documento")\n${reference.trim()}\n\n`
       : "";
 
     const promptBlock = (userPrompt || "").trim()
-      ? `### Instrução do usuário\n${userPrompt.trim()}\n\n`
+      ? `### INSTRUÇÃO DO USUÁRIO\n${userPrompt.trim()}\n\n`
       : "";
 
-    const emailBlock = `### E-mail\nAssunto: ${subject || ""}\n\n${messages || ""}`.trim();
+    const emailBlock = `### E-MAIL\nAssunto: ${subject || ""}\n\n${messages || ""}`.trim();
 
-    const content = `${personalizationBlock}${promptBlock}${emailBlock}`.trim();
+    const content = `${sigBlock}${refBlock}${promptBlock}${emailBlock}`.trim();
 
-    if (!content) {
-      return res.status(400).json({ error: "Conteúdo vazio" });
-    }
+    if (!content) return res.status(400).json({ error: "Conteúdo vazio" });
 
     const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
     const ASSISTANT_ID = process.env.ASSISTANT_ID;
@@ -44,7 +41,6 @@ export default async function handler(req, res) {
     }
 
     const apiBase = "https://api.openai.com/v1";
-
     const headers = {
       "Content-Type": "application/json",
       "Authorization": `Bearer ${OPENAI_API_KEY}`,
@@ -52,16 +48,11 @@ export default async function handler(req, res) {
     };
 
     // 1) cria thread
-    const threadRes = await fetch(`${apiBase}/threads`, {
-      method: "POST",
-      headers
-    });
-
+    const threadRes = await fetch(`${apiBase}/threads`, { method: "POST", headers });
     if (!threadRes.ok) {
       const err = await threadRes.text();
       return res.status(500).json({ error: "Erro ao criar thread", detail: err });
     }
-
     const thread = await threadRes.json();
 
     // 2) envia mensagem
@@ -70,7 +61,6 @@ export default async function handler(req, res) {
       headers,
       body: JSON.stringify({ role: "user", content })
     });
-
     if (!msgRes.ok) {
       const err = await msgRes.text();
       return res.status(500).json({ error: "Erro ao enviar mensagem", detail: err });
@@ -82,12 +72,10 @@ export default async function handler(req, res) {
       headers,
       body: JSON.stringify({ assistant_id: ASSISTANT_ID })
     });
-
     if (!runRes.ok) {
       const err = await runRes.text();
       return res.status(500).json({ error: "Erro ao iniciar run", detail: err });
     }
-
     const run = await runRes.json();
 
     // 4) polling
@@ -101,7 +89,6 @@ export default async function handler(req, res) {
         `${apiBase}/threads/${thread.id}/runs/${run.id}`,
         { headers }
       );
-
       statusObj = await statusRes.json();
       if (statusObj.status === "completed") break;
 
