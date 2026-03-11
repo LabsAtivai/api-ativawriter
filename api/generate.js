@@ -1,17 +1,22 @@
 export default async function handler(req, res) {
   setCors(res);
 
-  if (req.method === "OPTIONS") return res.status(200).end();
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
   }
 
   try {
     const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-    const MODEL = process.env.OPENAI_MODEL || "gpt-5.4-mini";
+    const MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
 
     if (!OPENAI_API_KEY) {
-      return res.status(500).json({ error: "OPENAI_API_KEY não configurada" });
+      return res.status(500).json({
+        error: "OPENAI_API_KEY não configurada no ambiente"
+      });
     }
 
     const {
@@ -73,12 +78,11 @@ OBJEÇÕES:
 - Não recuse automaticamente conversas quando o e-mail for apenas uma ponte para um decisor.
 
 FORMATO:
-- Assunto opcional somente se necessário.
 - Corpo do e-mail pronto para colar.
 - Assinatura real ao final quando existir.
 `.trim();
 
-    const userInput = `
+    const input = `
 ### ASSINATURA
 ${cleanSignature || "[não informada]"}
 
@@ -95,22 +99,38 @@ ${cleanMessages || "[sem corpo]"}
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Authorization": \`Bearer ${OPENAI_API_KEY}\`
+        "Authorization": `Bearer ${OPENAI_API_KEY}`
       },
       body: JSON.stringify({
         model: MODEL,
         instructions: systemInstructions,
-        input: userInput,
+        input,
         max_output_tokens: 700
       })
     });
 
-    const data = await apiRes.json().catch(() => null);
+    const requestId = apiRes.headers.get("x-request-id");
+    const rawText = await apiRes.text();
+
+    let data = null;
+    try {
+      data = rawText ? JSON.parse(rawText) : null;
+    } catch {
+      data = null;
+    }
 
     if (!apiRes.ok) {
-      console.error("Erro OpenAI:", data);
+      console.error("OpenAI upstream error", {
+        status: apiRes.status,
+        requestId,
+        body: data || rawText
+      });
+
       return res.status(apiRes.status).json({
-        error: data?.error?.message || "Erro ao gerar resposta"
+        error:
+          data?.error?.message ||
+          `Erro da OpenAI (${apiRes.status})`,
+        requestId
       });
     }
 
@@ -119,12 +139,24 @@ ${cleanMessages || "[sem corpo]"}
       extractTextFromResponse(data);
 
     if (!responseText) {
-      return res.status(500).json({ error: "A resposta veio vazia" });
+      console.error("Resposta vazia da OpenAI", {
+        requestId,
+        body: data
+      });
+
+      return res.status(502).json({
+        error: "A OpenAI respondeu sem texto final",
+        requestId
+      });
     }
 
-    return res.status(200).json({ response: responseText.trim() });
+    return res.status(200).json({
+      response: responseText.trim(),
+      requestId
+    });
   } catch (error) {
     console.error("Erro interno API:", error);
+
     return res.status(500).json({
       error: error?.message || "Erro interno"
     });
@@ -139,8 +171,7 @@ function setCors(res) {
 
 function limitText(value, max) {
   const text = String(value || "").trim();
-  if (text.length <= max) return text;
-  return text.slice(0, max);
+  return text.length > max ? text.slice(0, max) : text;
 }
 
 function extractTextFromResponse(data) {
