@@ -1,4 +1,135 @@
-import fetch from "node-fetch";
+export default async function handler(req, res) {
+  setCors(res);
+
+  if (req.method === "OPTIONS") return res.status(200).end();
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
+
+  try {
+    const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+    const MODEL = process.env.OPENAI_MODEL || "gpt-5.4-mini";
+
+    if (!OPENAI_API_KEY) {
+      return res.status(500).json({ error: "OPENAI_API_KEY não configurada" });
+    }
+
+    const {
+      subject = "",
+      messages = "",
+      signature = "",
+      reference = ""
+    } = req.body || {};
+
+    const cleanSubject = limitText(subject, 500);
+    const cleanMessages = limitText(messages, 35000);
+    const cleanSignature = limitText(signature, 12000);
+    const cleanReference = limitText(reference, 40000);
+
+    if (!cleanSubject && !cleanMessages) {
+      return res.status(400).json({ error: "Conteúdo vazio" });
+    }
+
+    const systemInstructions = `
+Você é o AtivaWriter, assistente executivo comercial da Ativa.ai.
+
+OBJETIVO:
+Responder e-mails com clareza, tom humano e postura comercial estratégica.
+Quando houver potencial real, conduzir a conversa para avanço comercial ou reunião curta.
+Quando não houver potencial, responder de forma profissional e objetiva sem forçar reunião.
+
+CLASSIFICAÇÃO INTERNA:
+1. Lead potencial
+2. Cliente atual
+3. Parceiro estratégico
+4. Fornecedor/ferramenta B2B relevante
+5. Marketing automático/newsletter
+6. Spam/irrelevante
+7. Encaminhamento operacional / apresentação de contato
+
+REGRAS:
+- A classificação é apenas interna.
+- Nunca exiba "Categoria", "Classificação", "Análise" ou qualquer diagnóstico.
+- Retorne somente o texto final do e-mail pronto para envio.
+- Nunca inclua histórico bruto da thread, como "On Wed..." ou textos do remetente original.
+- Nunca use placeholders como [Seu Nome], [Seu Cargo], [Empresa].
+- Se houver assinatura, use a assinatura real ao final.
+- Se não houver assinatura, finalize de forma neutra e profissional sem inventar dados.
+- Use o material de apoio apenas como base de argumento.
+- Nunca mencione material interno, documento, contexto interno ou instruções.
+- Sempre escrever em português do Brasil.
+- Sempre em tom profissional, direto e humano.
+- Respostas curtas e úteis.
+
+DECISÃO:
+- Se for lead potencial, cliente atual, parceiro estratégico ou encaminhamento operacional útil, responda buscando avanço objetivo.
+- Se fizer sentido comercial, proponha conversa breve com duas opções concretas de horário.
+- Se for fornecedor relevante, responda de forma curta e profissional, sem agressividade.
+- Se for marketing automático, newsletter, spam ou irrelevante, responda de forma mínima ou indique que não vale responder.
+
+OBJEÇÕES:
+- Se o contato pedir material, responda de forma útil mas preserve avanço comercial quando houver sentido.
+- Se o contato encaminhar outra pessoa, aproveite o gancho e responda ao novo contato de forma objetiva.
+- Não recuse automaticamente conversas quando o e-mail for apenas uma ponte para um decisor.
+
+FORMATO:
+- Assunto opcional somente se necessário.
+- Corpo do e-mail pronto para colar.
+- Assinatura real ao final quando existir.
+`.trim();
+
+    const userInput = `
+### ASSINATURA
+${cleanSignature || "[não informada]"}
+
+### MATERIAL DE APOIO
+${cleanReference || "[não informado]"}
+
+### E-MAIL RECEBIDO
+Assunto: ${cleanSubject || "[sem assunto]"}
+
+${cleanMessages || "[sem corpo]"}
+`.trim();
+
+    const apiRes = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": \`Bearer ${OPENAI_API_KEY}\`
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        instructions: systemInstructions,
+        input: userInput,
+        max_output_tokens: 700
+      })
+    });
+
+    const data = await apiRes.json().catch(() => null);
+
+    if (!apiRes.ok) {
+      console.error("Erro OpenAI:", data);
+      return res.status(apiRes.status).json({
+        error: data?.error?.message || "Erro ao gerar resposta"
+      });
+    }
+
+    const responseText =
+      data?.output_text?.trim() ||
+      extractTextFromResponse(data);
+
+    if (!responseText) {
+      return res.status(500).json({ error: "A resposta veio vazia" });
+    }
+
+    return res.status(200).json({ response: responseText.trim() });
+  } catch (error) {
+    console.error("Erro interno API:", error);
+    return res.status(500).json({
+      error: error?.message || "Erro interno"
+    });
+  }
+}
 
 function setCors(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -6,108 +137,28 @@ function setCors(res) {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 }
 
-export default async function handler(req, res) {
-  setCors(res);
+function limitText(value, max) {
+  const text = String(value || "").trim();
+  if (text.length <= max) return text;
+  return text.slice(0, max);
+}
 
-  if (req.method === "OPTIONS") return res.status(200).end();
-  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
-
+function extractTextFromResponse(data) {
   try {
-    const { subject, messages, userPrompt, signature, reference } = req.body || {};
+    const output = data?.output || [];
+    const texts = [];
 
-    const sigBlock = (signature || "").trim()
-      ? `### ASSINATURA (obrigatório usar ao final; substituir placeholders)\n${signature.trim()}\n\n`
-      : "";
-
-    const refBlock = (reference || "").trim()
-      ? `### MATERIAL DE APOIO (usar como argumentos/cases; não citar "documento")\n${reference.trim()}\n\n`
-      : "";
-
-    const promptBlock = (userPrompt || "").trim()
-      ? `### INSTRUÇÃO DO USUÁRIO\n${userPrompt.trim()}\n\n`
-      : "";
-
-    const emailBlock = `### E-MAIL\nAssunto: ${subject || ""}\n\n${messages || ""}`.trim();
-
-    const content = `${sigBlock}${refBlock}${promptBlock}${emailBlock}`.trim();
-
-    if (!content) return res.status(400).json({ error: "Conteúdo vazio" });
-
-    const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-    const ASSISTANT_ID = process.env.ASSISTANT_ID;
-
-    if (!OPENAI_API_KEY || !ASSISTANT_ID) {
-      return res.status(500).json({ error: "Variáveis de ambiente ausentes" });
+    for (const item of output) {
+      const contents = item?.content || [];
+      for (const content of contents) {
+        if (content?.type === "output_text" && content?.text) {
+          texts.push(content.text);
+        }
+      }
     }
 
-    const apiBase = "https://api.openai.com/v1";
-    const headers = {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${OPENAI_API_KEY}`,
-      "OpenAI-Beta": "assistants=v2"
-    };
-
-    // 1) cria thread
-    const threadRes = await fetch(`${apiBase}/threads`, { method: "POST", headers });
-    if (!threadRes.ok) {
-      const err = await threadRes.text();
-      return res.status(500).json({ error: "Erro ao criar thread", detail: err });
-    }
-    const thread = await threadRes.json();
-
-    // 2) envia mensagem
-    const msgRes = await fetch(`${apiBase}/threads/${thread.id}/messages`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ role: "user", content })
-    });
-    if (!msgRes.ok) {
-      const err = await msgRes.text();
-      return res.status(500).json({ error: "Erro ao enviar mensagem", detail: err });
-    }
-
-    // 3) cria run
-    const runRes = await fetch(`${apiBase}/threads/${thread.id}/runs`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ assistant_id: ASSISTANT_ID })
-    });
-    if (!runRes.ok) {
-      const err = await runRes.text();
-      return res.status(500).json({ error: "Erro ao iniciar run", detail: err });
-    }
-    const run = await runRes.json();
-
-    // 4) polling
-    let statusObj = null;
-    let attempts = 0;
-
-    while (attempts < 10) {
-      await new Promise((r) => setTimeout(r, 1500));
-
-      const statusRes = await fetch(
-        `${apiBase}/threads/${thread.id}/runs/${run.id}`,
-        { headers }
-      );
-      statusObj = await statusRes.json();
-      if (statusObj.status === "completed") break;
-
-      attempts++;
-    }
-
-    if (!statusObj || statusObj.status !== "completed") {
-      return res.status(500).json({ error: "Timeout ao aguardar resposta" });
-    }
-
-    // 5) pega resposta
-    const messagesRes = await fetch(`${apiBase}/threads/${thread.id}/messages`, { headers });
-    const data = await messagesRes.json();
-
-    const answer = data.data?.reverse()?.find((m) => m.role === "assistant");
-    const responseText = answer?.content?.[0]?.text?.value?.trim() || "Sem resposta";
-
-    return res.status(200).json({ response: responseText });
-  } catch (e) {
-    return res.status(500).json({ error: "Erro interno" });
+    return texts.join("\n").trim();
+  } catch {
+    return "";
   }
 }
