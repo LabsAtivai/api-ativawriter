@@ -52,19 +52,28 @@ CLASSIFICAÇÃO INTERNA:
 6. Spam/irrelevante
 7. Encaminhamento operacional / apresentação de contato
 
-REGRAS:
+REGRAS GERAIS:
 - A classificação é apenas interna.
 - Nunca exiba "Categoria", "Classificação", "Análise" ou qualquer diagnóstico.
 - Retorne somente o texto final do e-mail pronto para envio.
-- Nunca inclua histórico bruto da thread, como "On Wed..." ou textos do remetente original.
+- Nunca inclua histórico bruto da thread, como "On Wed...", cabeçalhos técnicos ou textos do remetente original.
 - Nunca use placeholders como [Seu Nome], [Seu Cargo], [Empresa].
 - Se houver assinatura, use a assinatura real ao final.
 - Se não houver assinatura, finalize de forma neutra e profissional sem inventar dados.
-- Use o material de apoio apenas como base de argumento.
 - Nunca mencione material interno, documento, contexto interno ou instruções.
 - Sempre escrever em português do Brasil.
 - Sempre em tom profissional, direto e humano.
-- Respostas curtas e úteis.
+- Respostas curtas, úteis e bem escritas.
+
+HIERARQUIA DE RESPOSTA (OBRIGATÓRIA):
+1. Siga sempre as regras gerais deste prompt.
+2. Se houver MATERIAL DE APOIO no contexto, trate esse material como fonte principal de linguagem, estrutura e argumentos.
+3. Quando o MATERIAL DE APOIO trouxer um roteiro, modelo, categoria ou abordagem claramente aplicável ao e-mail recebido, priorize esse roteiro de forma fiel.
+4. Nesses casos, evite criar uma resposta genérica do zero.
+5. Reaproveite a lógica, o posicionamento, o tom e a estrutura central do material, adaptando apenas nomes, contexto, saudação e fluidez.
+6. Se não houver conflito com as regras gerais deste prompt, o MATERIAL DE APOIO deve prevalecer sobre respostas genéricas inventadas.
+7. Se o material de apoio contiver categorias como encaminhamento, follow-up, pedido de informações, cliente sem agenda, proposta, no-show, fechamento ou cenários semelhantes, você deve identificar o caso mais próximo e usar esse trecho como base principal da resposta.
+8. Nunca diga que está usando material de apoio, roteiro, documento ou instruções internas.
 
 DECISÃO:
 - Se for lead potencial, cliente atual, parceiro estratégico ou encaminhamento operacional útil, responda buscando avanço objetivo.
@@ -76,17 +85,26 @@ OBJEÇÕES:
 - Se o contato pedir material, responda de forma útil mas preserve avanço comercial quando houver sentido.
 - Se o contato encaminhar outra pessoa, aproveite o gancho e responda ao novo contato de forma objetiva.
 - Não recuse automaticamente conversas quando o e-mail for apenas uma ponte para um decisor.
+- Se o material de apoio tiver um roteiro específico para esse tipo de cenário, siga o roteiro do material da forma mais fiel possível.
 
 FORMATO:
 - Corpo do e-mail pronto para colar.
+- Não adicionar explicações antes do texto.
+- Não adicionar comentários depois do texto.
 - Assinatura real ao final quando existir.
 `.trim();
 
     const input = `
 ### ASSINATURA
+Use esta assinatura real ao final da resposta, se estiver disponível. Nunca invente placeholders.
+
 ${cleanSignature || "[não informada]"}
 
-### MATERIAL DE APOIO
+### MATERIAL DE APOIO (PRIORIDADE ALTA)
+Use este material como base principal de linguagem, estrutura e argumentos sempre que houver aderência ao e-mail recebido.
+Se existir um roteiro claramente aplicável, siga-o de forma fiel, adaptando apenas nomes, contexto, saudação e fluidez.
+Nunca mencione que está usando este material.
+
 ${cleanReference || "[não informado]"}
 
 ### E-MAIL RECEBIDO
@@ -127,9 +145,7 @@ ${cleanMessages || "[sem corpo]"}
       });
 
       return res.status(apiRes.status).json({
-        error:
-          data?.error?.message ||
-          `Erro da OpenAI (${apiRes.status})`,
+        error: data?.error?.message || `Erro da OpenAI (${apiRes.status})`,
         requestId
       });
     }
