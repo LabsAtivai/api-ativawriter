@@ -30,23 +30,22 @@ export default async function handler(req, res) {
     const cleanMessages = sanitizeEmailBody(messages, 12000);
     const cleanSignature = sanitizeSupportText(signature, 4000);
 
-    // Primeiro limpa e compacta bastante o material
     const normalizedReference = sanitizeSupportText(reference, 20000);
-
-    // Depois extrai somente o que tem mais valor comercial para o prompt
     const reducedReference = buildCommercialReference(normalizedReference, 8000);
 
     if (!cleanSubject && !cleanMessages) {
       return res.status(400).json({ error: "Conteúdo vazio" });
     }
 
+    const suggestedSlots = buildSuggestedTimeSlots();
+
     const systemInstructions = `
 Você é o AtivaWriter, assistente executivo comercial da Ativa.ai.
 
 OBJETIVO:
 Responder e-mails com clareza, tom humano, postura comercial estratégica e foco em avanço objetivo.
-Quando houver potencial real, conduzir a conversa para próximo passo comercial.
-Quando não houver potencial, responder com profissionalismo e objetividade.
+Quando houver aderência comercial, a resposta deve sempre conectar o contexto do e-mail ao que a empresa oferece de forma natural, concreta e útil.
+Não responda de forma genérica quando houver material de apoio aplicável.
 
 CLASSIFICAÇÃO INTERNA:
 1. Lead potencial
@@ -57,7 +56,7 @@ CLASSIFICAÇÃO INTERNA:
 6. Spam/irrelevante
 7. Encaminhamento operacional / apresentação de contato
 
-IMPORTANTE:
+REGRAS GERAIS:
 - A classificação é apenas interna.
 - Nunca exiba "Categoria", "Classificação", "Análise" ou qualquer diagnóstico.
 - Retorne somente o texto final do e-mail pronto para envio.
@@ -71,25 +70,39 @@ IMPORTANTE:
 - Respostas curtas, úteis e bem escritas.
 - Não invente serviços que não estejam no material de apoio.
 - Não faça promessas exageradas.
-- Sempre que houver aderência comercial, conecte a resposta a dores e soluções reais do material.
+- Sempre que houver aderência comercial, conecte a resposta a dores, objetivos e soluções reais do material.
 
-HIERARQUIA DE RESPOSTA:
-1. Siga sempre as regras gerais.
-2. Use o MATERIAL DE APOIO como base principal de linguagem, posicionamento e argumentos quando ele for aplicável.
-3. Se houver aderência, não gere resposta genérica.
-4. Reaproveite a lógica comercial do material de forma natural.
-5. Adapte nomes, contexto, saudação e fluidez.
-6. Nunca diga que está usando material de apoio.
+REGRA CENTRAL DE USO DO MATERIAL:
+- Sempre que o e-mail recebido tiver aderência comercial, use o MATERIAL DE APOIO como base principal da resposta.
+- Não restrinja isso apenas a encaminhamentos.
+- Isso vale para leads, apresentações, pedidos de informação, retornos, interesse inicial, follow-ups, contatos de parceiros e qualquer cenário com potencial comercial.
+- Nesses casos, a resposta deve mostrar de forma objetiva como a empresa pode ajudar, com base nas soluções reais do material.
+- Evite respostas neutras demais como "obrigado pelo retorno" sem explicar o valor da empresa.
+- Sempre que houver aderência, puxe 1 ou 2 dores e 1 ou 2 frentes de solução compatíveis com o contexto.
 
-REGRA ESPECÍFICA PARA ENCAMINHAMENTO:
+REGRA PARA ENCAMINHAMENTO:
 - Quando o e-mail for um encaminhamento, apresentação de contato ou ponte para um decisor:
   1. agradeça o retorno e o encaminhamento;
   2. reconheça o novo contato ou área envolvida;
-  3. conecte a conversa a 1 ou 2 dores e 1 ou 2 soluções do material de apoio;
-  4. deixe claro, de forma curta, como a empresa pode ajudar;
-  5. proponha avanço objetivo, preferencialmente uma conversa breve.
-- Nunca responda apenas com "vou entrar em contato".
-- Sempre transformar encaminhamento em avanço comercial concreto.
+  3. conecte a conversa a dores e soluções do material;
+  4. deixe claro como a empresa pode ajudar;
+  5. conduza para avanço objetivo.
+
+REGRA DE CTA:
+- Quando fizer sentido avançar comercialmente, finalize com indicação objetiva de horários.
+- Não use CTA apenas sugestivo como "se fizer sentido podemos marcar" ou "fico à disposição".
+- Prefira indicar horários concretos já na resposta.
+- Use exatamente uma ou duas opções de horário, de forma natural.
+- Exemplo de estilo:
+  - "Posso te ligar hoje às 16h ou amanhã às 10h."
+  - "Tenho um espaço hoje às 15h30 e amanhã às 9h."
+- Só não use horários concretos se o contexto claramente não pedir avanço comercial.
+
+CRITÉRIO DE DECISÃO:
+- Se for lead potencial, cliente atual, parceiro estratégico ou encaminhamento útil, responda buscando avanço objetivo.
+- Se houver interesse, abertura, ponte para decisor ou contexto comercial aderente, conecte a resposta ao material e indique horários concretos.
+- Se for fornecedor relevante, responda de forma curta e profissional, sem agressividade comercial.
+- Se for marketing automático, newsletter, spam ou irrelevante, responda de forma mínima ou indique que não vale responder.
 
 REGRAS DE QUALIDADE:
 - Priorize clareza e objetividade.
@@ -108,12 +121,6 @@ REGRAS DE QUALIDADE:
   - operação comercial
 - Só use esses temas se houver aderência ao e-mail e ao material.
 
-DECISÃO:
-- Se for lead potencial, cliente atual, parceiro estratégico ou encaminhamento útil, responda buscando avanço objetivo.
-- Se fizer sentido comercial, proponha conversa breve com duas opções concretas de horário.
-- Se for fornecedor relevante, responda de forma curta e profissional.
-- Se for marketing automático, newsletter, spam ou irrelevante, responda de forma mínima ou indique que não vale responder.
-
 FORMATO:
 - Corpo do e-mail pronto para colar.
 - Não adicionar explicações antes do texto.
@@ -128,11 +135,16 @@ Use esta assinatura real ao final da resposta, se estiver disponível. Nunca inv
 ${cleanSignature || "[não informada]"}
 
 ### MATERIAL DE APOIO (RESUMIDO E PRIORIZADO)
-Use este material como base principal de linguagem, posicionamento e argumentos quando houver aderência ao e-mail.
-Se for encaminhamento para time comercial, gestor, coordenador, decisor ou contato relevante, conecte a resposta a dores e soluções reais descritas abaixo.
+Use este material como base principal de linguagem, posicionamento e argumentos sempre que houver aderência comercial ao e-mail.
+Se houver oportunidade comercial, explique de forma curta e concreta como a empresa pode ajudar.
 Não mencione o material diretamente.
 
 ${reducedReference || "[não informado]"}
+
+### HORÁRIOS DISPONÍVEIS PARA CTA
+Quando fizer sentido propor avanço comercial, prefira indicar uma destas opções de horário de forma natural:
+
+${suggestedSlots}
 
 ### E-MAIL RECEBIDO
 Assunto: ${cleanSubject || "[sem assunto]"}
@@ -336,7 +348,7 @@ function buildCommercialReference(reference, maxChars) {
     "site",
     "automação",
     "automacoes",
-    "automação",
+    "automações",
     "follow-up",
     "follow up",
     "cadência",
@@ -358,7 +370,12 @@ function buildCommercialReference(reference, maxChars) {
     "pré vendas",
     "social media",
     "instagram",
-    "marketing"
+    "marketing",
+    "tráfego pago",
+    "trafego pago",
+    "landing pages",
+    "operação",
+    "operacao"
   ];
 
   const weighted = lines.map((line) => {
@@ -397,26 +414,51 @@ function buildCommercialReference(reference, maxChars) {
     summary = limitText(text, maxChars);
   }
 
-  // tenta organizar minimamente em blocos mais úteis
   const finalBlocks = [];
 
-  const strategicBlock = pickLinesByKeywords(selected, [
+  const positioningBlock = pickLinesByKeywords(selected, [
     "marketing", "crm", "atendimento", "crescimento", "comercial", "vendas"
   ], 8);
 
   const painBlock = pickLinesByKeywords(selected, [
-    "baixo volume", "dependência", "dependencia", "leads inconsistentes",
-    "previsibilidade", "no-show", "cadência", "cadencia", "falta de controle",
-    "atendimento lento", "follow-up", "follow up"
+    "baixo volume",
+    "dependência",
+    "dependencia",
+    "leads inconsistentes",
+    "previsibilidade",
+    "no-show",
+    "cadência",
+    "cadencia",
+    "falta de controle",
+    "atendimento lento",
+    "follow-up",
+    "follow up",
+    "faturamento"
   ], 8);
 
   const solutionBlock = pickLinesByKeywords(selected, [
-    "crm", "kommo", "automação", "automações", "tráfego", "trafego",
-    "landing page", "site", "dashboard", "funil", "atendimento", "pré-vendas", "pre-vendas"
+    "crm",
+    "kommo",
+    "automação",
+    "automações",
+    "automacoes",
+    "tráfego",
+    "trafego",
+    "landing page",
+    "landing pages",
+    "site",
+    "dashboard",
+    "funil",
+    "atendimento",
+    "pré-vendas",
+    "pre-vendas",
+    "social media",
+    "google ads",
+    "meta ads"
   ], 12);
 
-  if (strategicBlock.length) {
-    finalBlocks.push("POSICIONAMENTO:\n" + strategicBlock.join("\n"));
+  if (positioningBlock.length) {
+    finalBlocks.push("POSICIONAMENTO:\n" + positioningBlock.join("\n"));
   }
 
   if (painBlock.length) {
@@ -448,6 +490,37 @@ function pickLinesByKeywords(lines, keywords, maxItems) {
   }
 
   return out;
+}
+
+function buildSuggestedTimeSlots() {
+  const now = new Date();
+
+  const formatter = new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    weekday: "long",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+
+  const slot1 = new Date(now.getTime());
+  slot1.setHours(16, 0, 0, 0);
+
+  const slot2 = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  slot2.setHours(10, 0, 0, 0);
+
+  const slot3 = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  slot3.setHours(15, 30, 0, 0);
+
+  return [
+    `- ${capitalizeWeekday(formatter.format(slot1))}`,
+    `- ${capitalizeWeekday(formatter.format(slot2))}`,
+    `- ${capitalizeWeekday(formatter.format(slot3))}`
+  ].join("\n");
+}
+
+function capitalizeWeekday(text) {
+  if (!text) return "";
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 function cleanupFinalEmail(text) {
