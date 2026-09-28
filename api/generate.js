@@ -91,12 +91,26 @@ REGRA PARA ENCAMINHAMENTO:
 REGRA DE CTA:
 - Quando fizer sentido avançar comercialmente, finalize com indicação objetiva de horários.
 - Não use CTA apenas sugestivo como "se fizer sentido podemos marcar" ou "fico à disposição".
-- Prefira indicar horários concretos já na resposta.
+- Prefira indicar horários concretos já na resposta, usando exclusivamente as opções da lista HORÁRIOS DISPONÍVEIS PARA CTA.
 - Use exatamente uma ou duas opções de horário, de forma natural.
-- Exemplo de estilo:
-  - "Posso te ligar hoje às 16h ou amanhã às 10h."
-  - "Tenho um espaço hoje às 15h30 e amanhã às 9h."
+- Nunca invente ou calcule um horário por conta própria; use somente os horários fornecidos na lista.
 - Só não use horários concretos se o contexto claramente não pedir avanço comercial.
+
+HORÁRIO COMERCIAL:
+- A empresa atende apenas de 09h às 11h30 e das 14h às 17h, em dias úteis (segunda a sexta).
+- Todo horário sugerido para reunião, ligação ou call deve estar dentro dessas janelas — nunca fora delas (ex.: 12h, 13h, antes das 9h, depois das 17h, finais de semana).
+- A lista HORÁRIOS DISPONÍVEIS PARA CTA já respeita essas janelas; use-a como única fonte de horários.
+
+AGENDAMENTO PROPOSTO PELO PROSPECT:
+- Se o prospect já sugeriu data e horário para a reunião, e esse horário está dentro do horário comercial (09h-11h30 ou 14h-17h) em dia útil, CONFIRME e ACEITE esse horário diretamente na resposta, sem indicar a lista de horários disponíveis nem sugerir alternativa.
+- Não afirme indisponibilidade quando não houver motivo real para isso.
+- Só proponha horário alternativo (usando a lista HORÁRIOS DISPONÍVEIS PARA CTA) se o horário sugerido pelo prospect cair fora do horário comercial ou em fim de semana/feriado; nesse caso, explique brevemente o motivo e ofereça as opções da lista.
+
+OBJEÇÕES:
+- Se o contato disser que não tem interesse, NÃO aceite de imediato nem encerre a conversa na primeira resposta.
+- Contra-argumente uma vez de forma consultiva: entenda ou reformule a objeção, mostre valor concreto e específico com base no material de apoio, e tente reabrir espaço para uma conversa curta.
+- Evite respostas passivas do tipo "sem problemas, qualquer coisa estou à disposição" quando ainda não houve tentativa de reverter a objeção.
+- Só aceite a recusa como definitiva se o contato reforçar a negativa mesmo após a contra-argumentação, ou deixar claro que não quer mais contato. Nesse caso, encerre de forma educada e profissional, sem insistir mais.
 
 CRITÉRIO DE DECISÃO:
 - Se for lead potencial, cliente atual, parceiro estratégico ou encaminhamento útil, responda buscando avanço objetivo.
@@ -492,8 +506,55 @@ function pickLinesByKeywords(lines, keywords, maxItems) {
   return out;
 }
 
-function buildSuggestedTimeSlots() {
-  const now = new Date();
+const BUSINESS_WINDOWS = [
+  { startH: 9, startM: 0, endH: 11, endM: 30 },
+  { startH: 14, startM: 0, endH: 17, endM: 0 }
+];
+
+function getSaoPauloNowParts() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).formatToParts(new Date());
+
+  const map = {};
+  for (const part of parts) map[part.type] = part.value;
+
+  return {
+    year: Number(map.year),
+    month: Number(map.month),
+    day: Number(map.day),
+    hour: map.hour === "24" ? 0 : Number(map.hour),
+    minute: Number(map.minute)
+  };
+}
+
+function addDays(year, month, day, amount) {
+  const d = new Date(Date.UTC(year, month - 1, day));
+  d.setUTCDate(d.getUTCDate() + amount);
+  return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() };
+}
+
+function weekdayOf(year, month, day) {
+  return new Date(Date.UTC(year, month - 1, day)).getUTCDay(); // 0=Dom ... 6=Sáb
+}
+
+function isBusinessDay(weekday) {
+  return weekday !== 0 && weekday !== 6;
+}
+
+// América/São Paulo está fixo em UTC-3 desde o fim do horário de verão em 2019.
+function saoPauloSlotToUTC(year, month, day, hour, minute) {
+  return new Date(Date.UTC(year, month - 1, day, hour + 3, minute, 0, 0));
+}
+
+function formatSlotLabel(slot) {
+  const utcDate = saoPauloSlotToUTC(slot.year, slot.month, slot.day, slot.hour, slot.minute);
 
   const formatter = new Intl.DateTimeFormat("pt-BR", {
     timeZone: "America/Sao_Paulo",
@@ -502,20 +563,53 @@ function buildSuggestedTimeSlots() {
     minute: "2-digit"
   });
 
-  const slot1 = new Date(now.getTime());
-  slot1.setHours(16, 0, 0, 0);
+  return capitalizeWeekday(formatter.format(utcDate));
+}
 
-  const slot2 = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-  slot2.setHours(10, 0, 0, 0);
+function buildSuggestedTimeSlots() {
+  const now = getSaoPauloNowParts();
+  const nowMinutes = now.hour * 60 + now.minute;
+  const slots = [];
 
-  const slot3 = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-  slot3.setHours(15, 30, 0, 0);
+  if (isBusinessDay(weekdayOf(now.year, now.month, now.day))) {
+    for (const w of BUSINESS_WINDOWS) {
+      const winStart = w.startH * 60 + w.startM;
+      const winEnd = w.endH * 60 + w.endM;
+      const earliest = Math.ceil((nowMinutes + 30) / 30) * 30;
+      const candidateMinutes = Math.max(winStart, earliest);
 
-  return [
-    `- ${capitalizeWeekday(formatter.format(slot1))}`,
-    `- ${capitalizeWeekday(formatter.format(slot2))}`,
-    `- ${capitalizeWeekday(formatter.format(slot3))}`
-  ].join("\n");
+      if (candidateMinutes <= winEnd - 30) {
+        slots.push({
+          year: now.year,
+          month: now.month,
+          day: now.day,
+          hour: Math.floor(candidateMinutes / 60),
+          minute: candidateMinutes % 60
+        });
+        break;
+      }
+    }
+  }
+
+  let cursor = { year: now.year, month: now.month, day: now.day };
+  let guard = 0;
+
+  while (slots.length < 3 && guard < 10) {
+    cursor = addDays(cursor.year, cursor.month, cursor.day, 1);
+    guard++;
+
+    if (!isBusinessDay(weekdayOf(cursor.year, cursor.month, cursor.day))) continue;
+
+    slots.push({ year: cursor.year, month: cursor.month, day: cursor.day, hour: 10, minute: 0 });
+    if (slots.length < 3) {
+      slots.push({ year: cursor.year, month: cursor.month, day: cursor.day, hour: 15, minute: 0 });
+    }
+  }
+
+  return slots
+    .slice(0, 3)
+    .map((slot) => `- ${formatSlotLabel(slot)}`)
+    .join("\n");
 }
 
 function capitalizeWeekday(text) {
